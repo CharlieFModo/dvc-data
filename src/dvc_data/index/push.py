@@ -62,6 +62,22 @@ def _filter_missing(index):
     return ret
 
 
+def _skip_existing_versions(diff, fs, path, callback=DEFAULT_CALLBACK) -> None:
+    """Drop files whose pushed version already exists on a version-aware remote.
+
+    Such a file needs no upload, and its delete is dropped too: deleting it
+    would leave its path with no current version.
+    """
+    files_create = list(
+        _prune_existing_versions(diff.files_create, fs, path, callback=callback)
+    )
+    pruned = {entry.key for entry in diff.files_create} - {
+        entry.key for entry in files_create
+    }
+    diff.files_create = files_create
+    diff.files_delete = [e for e in diff.files_delete if e.key not in pruned]
+
+
 def push(
     idxs,
     callback: "Callback" = DEFAULT_CALLBACK,
@@ -108,11 +124,7 @@ def push(
             if data.fs.version_aware:
                 desc = f"Checking status of existing versions in {data.path!r}"
                 with TqdmCallback(desc=desc, unit="file") as cb:
-                    diff.files_create = list(
-                        _prune_existing_versions(
-                            diff.files_create, data.fs, data.path, callback=cb
-                        )
-                    )
+                    _skip_existing_versions(diff, data.fs, data.path, callback=cb)
 
             with TqdmCallback(unit="file", desc=f"Pushing to {data.fs.protocol}") as cb:
                 cb.set_size(len(diff.files_create))

@@ -507,3 +507,27 @@ def test_md5_drops_entries_deleted_after_build(tmp_path):
     assert index[("foo",)].hash_info == HashInfo(
         "md5", "d3b07384d113edec49eaa6238ad5ff00"
     )
+
+
+def test_push_keeps_current_version_of_files_it_does_not_upload(mocker):
+    from dvc_data.index.checkout import Diff
+    from dvc_data.index.push import _skip_existing_versions
+
+    def entry(key, version_id):
+        return DataIndexEntry(key=(key,), meta=Meta(version_id=version_id))
+
+    diff = Diff(
+        files_delete=[entry("changed", "v1"), entry("stale", "v3")],
+        files_create=[entry("changed", None), entry("stale", "v2")],
+    )
+    mocker.patch(
+        "dvc_data.index.push._prune_existing_versions",
+        side_effect=lambda entries, *args, **kwargs: (
+            e for e in entries if e.meta.version_id is None
+        ),
+    )
+
+    _skip_existing_versions(diff, mocker.Mock(), "remote")
+
+    assert [e.key for e in diff.files_create] == [("changed",)]
+    assert [e.key for e in diff.files_delete] == [("changed",)]
