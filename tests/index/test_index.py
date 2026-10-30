@@ -475,3 +475,35 @@ def test_md5_skips_hashing_entries_whose_meta_matches(tmp_path, mocker):
     assert index[("bar",)].hash_info == HashInfo(
         "md5", "c157a79031e1c40f85931829bc5fc552"
     )
+
+
+def test_md5_fetches_infos_in_one_batch(tmp_path, mocker):
+    (tmp_path / "foo").write_bytes(b"foo\n")
+    (tmp_path / "bar").write_bytes(b"bar\n")
+    fs = LocalFileSystem()
+    index = build(str(tmp_path), fs)
+    info = mocker.spy(fs, "info")
+
+    md5(index)
+
+    batches = [c.args[0] for c in info.call_args_list if isinstance(c.args[0], list)]
+    assert len(batches) == 1
+    assert sorted(batches[0]) == [
+        str(tmp_path / "bar"),
+        str(tmp_path / "foo"),
+    ]
+
+
+def test_md5_drops_entries_deleted_after_build(tmp_path):
+    (tmp_path / "foo").write_bytes(b"foo\n")
+    (tmp_path / "bar").write_bytes(b"bar\n")
+    fs = LocalFileSystem()
+    index = build(str(tmp_path), fs)
+    (tmp_path / "bar").unlink()
+
+    index = md5(index)
+
+    assert ("bar",) not in index
+    assert index[("foo",)].hash_info == HashInfo(
+        "md5", "d3b07384d113edec49eaa6238ad5ff00"
+    )

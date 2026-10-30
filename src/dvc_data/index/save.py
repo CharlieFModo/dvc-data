@@ -17,11 +17,11 @@ if TYPE_CHECKING:
     from .index import BaseDataIndex, DataIndex, DataIndexKey
 
 
-def _meta_matches(fs, path, old_meta):
-    try:
-        info = fs.info(path)
-    except FileNotFoundError:
+def _meta_matches(fs, info, old_meta):
+    if isinstance(info, FileNotFoundError):
         return False
+    if isinstance(info, Exception):
+        raise info
 
     if getattr(fs, "immutable", False):
         return True
@@ -35,6 +35,27 @@ def _meta_matches(fs, path, old_meta):
     return old == new
 
 
+def _batch_infos(storages):
+    # Remote filesystems answer a batch of info calls concurrently, which
+    # matters when every call is a network round trip.
+    paths_by_fs = defaultdict(list)
+    for fs, path in storages:
+        paths_by_fs[fs].append(path)
+    infos = {}
+    for fs, paths in paths_by_fs.items():
+        results = fs.info(paths, return_exceptions=True)
+        infos.update({(fs, path): info for path, info in zip(paths, results)})
+    return infos
+
+
+def _file_storage(index, entry, storage):
+    try:
+        fs, path = index.storage_map.get_storage(entry, storage)
+    except ValueError:
+        return []
+    return [(entry, fs, path)]
+
+
 def md5(
     index: "BaseDataIndex",
     state: Optional["StateBase"] = None,
@@ -45,21 +66,21 @@ def md5(
 
     ret = DataIndex()
 
+    files = []
     for _, entry in index.iteritems():
         if entry.meta and entry.meta.isdir:
             ret.add(entry)
-            continue
+        else:
+            files.extend(_file_storage(index, entry, storage))
 
+    infos = _batch_infos((fs, path) for _, fs, path in files)
+
+    for entry, fs, path in files:
         hash_info = None
         if entry.hash_info and entry.hash_info.name in ("md5", "md5-dos2unix"):
             hash_info = entry.hash_info
 
-        try:
-            fs, path = index.storage_map.get_storage(entry, storage)
-        except ValueError:
-            continue
-
-        matches = _meta_matches(fs, path, entry.meta)
+        matches = _meta_matches(fs, infos[(fs, path)], entry.meta)
         if matches:
             ret.add(entry)
             if hash_info:
