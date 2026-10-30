@@ -40,15 +40,33 @@ def build_entry(
     )
 
 
+def _walk_from_find(
+    path: str, fs: "FileSystem"
+) -> Iterator[tuple[str, dict[str, dict], dict[str, dict], set[str]]]:
+    # Object stores list a whole prefix in one paginated request, while walk
+    # issues a separate listing request for every directory.
+    listing = fs.fs.find(path, detail=True, withdirs=True)
+    tree: dict[str, tuple[dict[str, dict], dict[str, dict]]] = {path: ({}, {})}
+    for entry_path, info in listing.items():
+        if entry_path == path:
+            continue
+        dirs, files = tree.setdefault(fs.parent(entry_path), ({}, {}))
+        if info["type"] == "directory":
+            dirs[fs.name(entry_path)] = info
+            tree.setdefault(entry_path, ({}, {}))
+        else:
+            files[fs.name(entry_path)] = info
+    for root, (dirs, files) in tree.items():
+        yield root, dirs, files, set()
+
+
 def safe_walk(
     path: str,
     fs: "FileSystem",
     ignore: Optional["Ignore"] = None,
 ) -> Iterator[tuple[str, dict[str, dict], dict[str, dict], set[str]]]:
     if not isinstance(fs, LocalFileSystem):
-        for root, dirs, files in fs.walk(path, detail=True):
-            yield root, dirs, files, set()
-
+        yield from _walk_from_find(path, fs)
         return
 
     # NOTE: can't use detail=True with walk, because that will make it error
