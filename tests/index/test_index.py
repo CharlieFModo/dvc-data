@@ -1,3 +1,5 @@
+import importlib
+
 import pytest
 from dvc_objects.fs.local import LocalFileSystem
 
@@ -19,6 +21,8 @@ from dvc_data.index import (
     write_db,
     write_json,
 )
+
+save_module = importlib.import_module("dvc_data.index.save")
 
 
 def test_index():
@@ -449,3 +453,25 @@ def test_open(tmp_path):
     assert index._trie._cache
     index.close()
     assert not index._trie._cache
+
+
+def test_md5_skips_hashing_entries_whose_meta_matches(tmp_path, mocker):
+    (tmp_path / "foo").write_bytes(b"foo\n")
+    (tmp_path / "bar").write_bytes(b"bar\n")
+    fs = LocalFileSystem()
+    index = build(str(tmp_path), fs)
+    foo_hash = HashInfo("md5", "d3b07384d113edec49eaa6238ad5ff00")
+    index[("foo",)] = DataIndexEntry(
+        key=("foo",), meta=index[("foo",)].meta, hash_info=foo_hash
+    )
+    mocker.patch("dvc_data.index.save._meta_matches", return_value=True)
+    hash_file = mocker.spy(save_module, "hash_file")
+
+    index = md5(index)
+
+    hashed = [call.args[0] for call in hash_file.call_args_list]
+    assert hashed == [str(tmp_path / "bar")]
+    assert index[("foo",)].hash_info == foo_hash
+    assert index[("bar",)].hash_info == HashInfo(
+        "md5", "c157a79031e1c40f85931829bc5fc552"
+    )

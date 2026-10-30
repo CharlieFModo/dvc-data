@@ -62,6 +62,8 @@ def md5(
         matches = _meta_matches(fs, path, entry.meta)
         if matches:
             ret.add(entry)
+            if hash_info:
+                continue
         elif matches is not None:
             continue
 
